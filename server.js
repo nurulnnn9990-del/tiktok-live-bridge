@@ -1,23 +1,4 @@
-const http = require('http');
-const WebSocket = require('ws');
-
-const PORT = process.env.PORT || 10000;
-
-// 1. Cipta HTTP Server untuk terima Webhook dari TikFinity
-const server = http.createServer((req, res) => {
-// CORS Header supaya webhook tidak disekat
-res.setHeader('Access-Control-Allow-Origin', '*');
-res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-if (req.method === 'OPTIONS') {
-res.writeHead(204);
-res.end();
-return;
-}
-
-// Laluan Webhook untuk TikFinity
-if (req.method === 'POST' && (req.url === '/api/webhook' || req.url === '/webhook')) {
+if (req.method === 'POST') {
 let body = '';
 req.on('data', chunk => {
 body += chunk.toString();
@@ -25,56 +6,37 @@ body += chunk.toString();
 
 req.on('end', () => {
 try {
-const data = JSON.parse(body || '{}');
-console.log('Data diterima dari TikFinity:', data);
+const rawData = JSON.parse(body || '{}');
+console.log('TikFinity Data Masuk:', rawData);
 
-// Cari nama penonton daripada data yang dihantar
-const targetName = data.username || data.nickname || data.name || data.comment || 'Penonton';
+// Ambil nama atau teks daripada pelbagai kemungkinan parameter TikFinity
+const senderName = rawData.nickname || rawData.uniqueId || rawData.user || rawData.username || rawData.comment || 'Tetamu';
+const commentText = rawData.comment || rawData.text || rawData.message || rawData.data || senderName;
 
-// Format mesej ke Hatchable
-const payload = JSON.stringify({
-event: 'write_name',
-name: targetName,
-text: targetName
+// Cipta paket yang menyamar sebagai format asal TikTok connector supaya Hatchable faham
+const packet = JSON.stringify({
+event: rawData.event || 'chat',
+uniqueId: rawData.uniqueId || senderName,
+nickname: senderName,
+comment: commentText,
+giftName: rawData.giftName || '',
+...rawData
 });
 
-// Hantar ke semua skrin Hatchable yang bersambung
-let sentCount = 0;
+// Hantar terus ke skrin Haruka / Hatchable
 wss.clients.forEach(client => {
 if (client.readyState === WebSocket.OPEN) {
-client.send(payload);
-sentCount++;
+client.send(packet);
 }
 });
 
-console.log(`Nama "${targetName}" dihantar ke ${sentCount} skrin Hatchable.`);
 res.writeHead(200, { 'Content-Type': 'application/json' });
-res.end(JSON.stringify({ status: 'success', name: targetName }));
+res.end(JSON.stringify({ status: 'ok' }));
 } catch (err) {
-console.error('Ralat membaca JSON Webhook:', err);
-res.writeHead(400, { 'Content-Type': 'text/plain' });
-res.end('Invalid JSON');
+console.error('Ralat JSON:', err);
+res.writeHead(400);
+res.end('Error');
 }
 });
-} else {
-// Paparan utama pelayan
-res.writeHead(200, { 'Content-Type': 'text/plain' });
-res.end('TikTok Live Bridge Server is Running Online!');
+return;
 }
-});
-
-// 2. Cipta WebSocket Server untuk disambung oleh Hatchable
-const wss = new WebSocket.Server({ server });
-
-wss.on('connection', (ws) => {
-console.log('Web Hatchable berjaya disambung!');
-
-ws.on('close', () => {
-console.log('Sambungan Hatchable ditutup.');
-});
-});
-
-// 3. Jalankan Server
-server.listen(PORT, () => {
-console.log(`Bridge Server sedang berjalan di port ${PORT}...`);
-});
